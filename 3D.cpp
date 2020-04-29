@@ -134,7 +134,7 @@ int main(int argc, char* argv[])
 {
   SDL_Event event;
   loadOBJ("cornell-box.obj", 1);
-  //loadOBJ("logo.obj", 0.01);
+  loadOBJ("logo.obj", 0.01);
   update();
 
   while(true)
@@ -674,7 +674,8 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
     if (lineString.find("mtllib") != string::npos){
       string* mtlTokens = split(lineString, ' ');
       materialFile = *(mtlTokens + 1);
-
+      materialFile.erase(remove_if(materialFile.begin(), materialFile.end(), ::isspace), materialFile.end());
+      
       ifstream mtlIfs;
       mtlIfs.open(materialFile, std::ifstream::in);
       char mtlLine[256];
@@ -735,7 +736,6 @@ vector<vector<uint32_t>> loadPPM(string file) {
   ifs.getline(widthAndHeight, 256);
   ifs.getline(colourChannel, 256);
 
-  //string toBeFound = " ";
   string s = widthAndHeight;
 
   size_t found = s.find(" ");
