@@ -99,6 +99,7 @@ void drawTexturedTriangle(CanvasTriangle triangle, int textureFileIndex);
 void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1);
 void threadRaytrace();
 RayTriangleIntersection getClosestIntersection(vec3 rayDirection);
+Colour getTextureIntersection(vec3 intersection, ModelTriangle modelTriangle);
 bool isInTriangle(vec3 intersectionPoint);
 bool isTriangleSelf(ModelTriangle self, ModelTriangle tri);
 float calculateBrightness(RayTriangleIntersection intersection);
@@ -313,7 +314,7 @@ void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1) {
 
       if (intersection.distanceFromCamera == INF) window.setPixelColour(flippedX, y, BLACK);
       else {
-        Colour colour = intersection.intersectedTriangle.colour;
+        Colour colour = intersection.colour;
         float brightness = calculateBrightness(intersection);
         
         uint32_t packedColour = (255<<24) + (int(colour.red*brightness)<<16) + (int(colour.green*brightness)<<8) + int(colour.blue*brightness);      
@@ -325,7 +326,7 @@ void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1) {
 
 RayTriangleIntersection getClosestIntersection(vec3 rayDirection) {
   vec3 closestIntersection = vec3(INF);
-  RayTriangleIntersection closestInt = RayTriangleIntersection(vec3(INF), INF, ModelTriangle());
+  RayTriangleIntersection closestInt = RayTriangleIntersection(vec3(INF), INF, ModelTriangle(), Colour(255,255,255));
   closestInt.intersectedTriangle.colour = Colour(0, 0, 0);
 
   for (int i = 0; i < (int)modelTriangles.size(); i++) {
@@ -338,11 +339,23 @@ RayTriangleIntersection getClosestIntersection(vec3 rayDirection) {
     if (isInTriangle(possibleSolution) && abs(possibleSolution.x) <= abs(closestIntersection.x)) {
       closestIntersection = possibleSolution;
       vec3 position = camera.position + (closestIntersection.x * rayDirection);
-      closestInt = RayTriangleIntersection(position, closestIntersection.x, modelTriangles[i]);
+      if (modelTriangles[i].textureFileIndex != -1) {
+          closestInt = RayTriangleIntersection(position, closestIntersection.x, modelTriangles[i], getTextureIntersection(closestIntersection, modelTriangles[i]));
+      }
+      else closestInt = RayTriangleIntersection(position, closestIntersection.x, modelTriangles[i], modelTriangles[i].colour);
     }
   }
 
   return closestInt;
+}
+
+Colour getTextureIntersection(vec3 intersection, ModelTriangle modelTriangle) {
+  vec2 e0 = modelTriangle.textureVertices[1] - modelTriangle.textureVertices[0];
+  vec2 e1 = modelTriangle.textureVertices[2] - modelTriangle.textureVertices[0];
+  vec2 value = modelTriangle.textureVertices[0] + (e0 * intersection.y) + (e1 * intersection.z);
+  uint32_t colour = textureFiles[modelTriangle.textureFileIndex][value.x][value.y];
+  
+  return Colour((colour & 0x00FF0000) >> 16, (colour & 0x0000FF00) >> 8, (colour & 0x000000FF) >> 0);
 }
 
 float calculateBrightness(RayTriangleIntersection intersection) {
