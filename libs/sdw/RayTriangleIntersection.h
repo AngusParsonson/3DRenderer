@@ -5,20 +5,18 @@ class RayTriangleIntersection
 {
   public:
     glm::vec3 intersectionPoint;
-    float distanceFromCamera;
+    glm::vec3 localIntersection;
     ModelTriangle intersectedTriangle;
-    Colour colour;
 
     RayTriangleIntersection()
     {
     }
 
-    RayTriangleIntersection(glm::vec3 point, float distance, ModelTriangle triangle, Colour col)
+    RayTriangleIntersection(glm::vec3 point, glm::vec3 local, ModelTriangle triangle)
     {
         intersectionPoint = point;
-        distanceFromCamera = distance;
+        localIntersection = local;
         intersectedTriangle = triangle;
-	colour = col;
     }
 };
 

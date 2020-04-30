@@ -7,8 +7,10 @@ class ModelTriangle
   public:
     glm::vec3 vertices[3];
     Colour colour;
+    glm::vec3 vertexNormals[3];
     glm::vec2 textureVertices[3];
-    int textureFileIndex;
+    int textureFileIndex = -1;
+    bool hasNormals = false;
 
     ModelTriangle()
     {
@@ -21,8 +23,22 @@ class ModelTriangle
       vertices[2] = v2;
       textureVertices[0] = glm::vec2(-1 ,-1);
       colour = trigColour;
-      textureFileIndex = -1;
     }
+    
+    ModelTriangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec3 vn0, glm::vec3 vn1, glm::vec3 vn2, Colour trigColour)
+    {
+      vertices[0] = v0;
+      vertices[1] = v1;
+      vertices[2] = v2;
+      vertexNormals[0] = vn0;
+      vertexNormals[1] = vn1;
+      vertexNormals[2] = vn2;
+      textureVertices[0] = glm::vec2(-1 ,-1);
+      colour = trigColour;
+      textureFileIndex = -1;
+      hasNormals = true;
+    }
+
 
     ModelTriangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec2 vt0, glm::vec2 vt1, glm::vec2 vt2, int fileInd) {
       vertices[0] = v0;
@@ -33,6 +49,21 @@ class ModelTriangle
       textureVertices[2] = vt2;
       colour = Colour(255, 255, 255);
       textureFileIndex = fileInd;
+    }
+
+    ModelTriangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec2 vt0, glm::vec2 vt1, glm::vec2 vt2, glm::vec3 vn0, glm::vec3 vn1, glm::vec3 vn2, int fileInd) {
+      vertices[0] = v0;
+      vertices[1] = v1;
+      vertices[2] = v2;
+      vertexNormals[0] = vn0;
+      vertexNormals[1] = vn1;
+      vertexNormals[2] = vn2;
+      textureVertices[0] = vt0;
+      textureVertices[1] = vt1;
+      textureVertices[2] = vt2;
+      colour = Colour(255, 255, 255);
+      textureFileIndex = fileInd;
+      hasNormals = true;
     }
 };
 

@@ -98,12 +98,13 @@ void drawFilledTriangle(CanvasTriangle triangle);
 void drawTexturedTriangle(CanvasTriangle triangle, int textureFileIndex);
 void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1);
 void threadRaytrace();
-RayTriangleIntersection getClosestIntersection(vec3 rayDirection);
+RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vector<ModelTriangle> unculledTriangles);
 Colour getTextureIntersection(vec3 intersection, ModelTriangle modelTriangle);
 bool isInTriangle(vec3 intersectionPoint);
 bool isTriangleSelf(ModelTriangle self, ModelTriangle tri);
 float calculateBrightness(RayTriangleIntersection intersection);
 bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleIntersection self);
+float phongShader(RayTriangleIntersection intersection);
 vector<CanvasPoint> interpolate2D(CanvasPoint from, CanvasPoint to, float numberOfValues);
 vector<CanvasPoint> interpolate2D(TexturePoint from, TexturePoint to, float numberOfValues);
 vector<CanvasPoint> interpolate3D(CanvasPoint from, CanvasPoint to, float numberOfValues);
@@ -118,6 +119,8 @@ CanvasPoint getInterpolatedPoint(CanvasPoint maxPoint, CanvasPoint midPoint, Can
 bool isPixelOnScreen(int x, int y);
 bool isFlatBotttomedTriangle(CanvasTriangle triangle);
 bool clipping(ModelTriangle triangle);
+vector<ModelTriangle> backFaceCull();
+bool pixelClipping(float z);
 
 uint32_t BLACK = (255<<24) + (int(0)<<16) + (int(0)<<8) + int(0);
 double depthBuffer[WIDTH][HEIGHT] = { { INF } };
@@ -125,8 +128,10 @@ int savedPPMs = 0;
 
 DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
 Camera camera = Camera(0, 2, 4);
-PointLight pointLight = PointLight(vec3(-0.3, 4.8, -3.1), 150);
+PointLight pointLight = PointLight(vec3(-0.3, 4.8, 0), 150);
 float ambientBrightness = pointLight.strength / 350;
+float specular = 0.5;
+float diffuse = 0.5;
 vector<ModelTriangle> modelTriangles;
 vector<CanvasTriangle> canvasTriangles;
 vector<vector<vector<uint32_t>>> textureFiles;
@@ -135,7 +140,8 @@ int main(int argc, char* argv[])
 {
   SDL_Event event;
   loadOBJ("cornell-box.obj", 1);
-  loadOBJ("logo.obj", 0.01);
+  //loadOBJ("logo.obj", 0.01);
+  loadOBJ("sphere.obj", 0.5);
   update();
 
   while(true)
@@ -154,9 +160,9 @@ void update() {
   window.clearPixels();
   //camera.lookAt();
   vector<CanvasTriangle> newCanvasTriangles;
-
-  for (int i = 0; i < (int)modelTriangles.size(); i++) {
-    if (clipping(modelTriangles[i])) newCanvasTriangles.push_back(get2DProjection(modelTriangles[i], camera));   
+  vector<ModelTriangle> unculledTriangles = backFaceCull();
+  for (int i = 0; i < (int)unculledTriangles.size(); i++) {
+    newCanvasTriangles.push_back(get2DProjection(unculledTriangles[i], camera));   
   }
 
   canvasTriangles = newCanvasTriangles;
@@ -171,6 +177,31 @@ bool clipping(ModelTriangle triangle) {
   if (camPos.z - middle.z < 0) return false;
   else if (length(diff) < 1) return false;
   else if (length(diff) > 100) return false;
+  else return true;
+}
+
+vector<ModelTriangle> backFaceCull() {
+  vector<ModelTriangle> unculledTriangles;
+  for (int i = 0; i < (int)modelTriangles.size(); i++) {
+    vec3 e0 = modelTriangles[i].vertices[1] - modelTriangles[i].vertices[0];
+    vec3 e1 = modelTriangles[i].vertices[2] - modelTriangles[i].vertices[0];
+    vec3 middle = (modelTriangles[i].vertices[0] + modelTriangles[i].vertices[1] + modelTriangles[i].vertices[2]) / 3.0f;
+    vec3 camPos = camera.position * camera.rotation;
+    vec3 diff = normalize(camPos - middle);
+
+    vec3 faceDir = normalize(cross(e1, e0));
+    float dotProd = dot(diff, faceDir);
+    
+    if (dotProd < 0) unculledTriangles.push_back(modelTriangles[i]);
+  }
+
+  return unculledTriangles;
+}
+
+bool pixelClipping(float z) {
+  vec3 camPos = camera.position * camera.rotation;
+  float diff = camPos.z - 1/z;
+  if (diff <= 0) return false;
   else return true;
 }
 
@@ -306,43 +337,46 @@ void threadRaytrace() {
 }
 
 void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1) {
+  vector<ModelTriangle> unculledTriangles = backFaceCull();
+
   for (int x = x0; x < x1; x++) {
     for (int y = y0; y < y1; y++) {
-      vec3 rayDirection = vec3(x - WIDTH/2, y - HEIGHT/2, FOCALLENGTH); 
-      RayTriangleIntersection intersection = getClosestIntersection(rayDirection);
+      vec3 rayDirection = vec3(x - WIDTH/2, y - HEIGHT/2, FOCALLENGTH) * camera.rotation; 
+      RayTriangleIntersection intersection = getClosestIntersection(rayDirection, unculledTriangles);
       int flippedX = WIDTH - x - 1;
 
-      if (intersection.distanceFromCamera == INF) window.setPixelColour(flippedX, y, BLACK);
+      if (intersection.localIntersection.x == INF) window.setPixelColour(flippedX, y, BLACK);
       else {
-        Colour colour = intersection.colour;
+        Colour colour;
+        if (intersection.intersectedTriangle.textureFileIndex != -1) {
+          colour = getTextureIntersection(intersection.localIntersection, intersection.intersectedTriangle);
+        }
+        else colour = intersection.intersectedTriangle.colour;
+
         float brightness = calculateBrightness(intersection);
-        
-        uint32_t packedColour = (255<<24) + (int(colour.red*brightness)<<16) + (int(colour.green*brightness)<<8) + int(colour.blue*brightness);      
+        uint32_t packedColour = (255<<24) + (int(colour.red*brightness)<<16) + (int(colour.green*brightness)<<8) + int(colour.blue*brightness);    
         window.setPixelColour(flippedX, y, packedColour);
       }     
     }
   }
 }
 
-RayTriangleIntersection getClosestIntersection(vec3 rayDirection) {
+RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vector<ModelTriangle> unculledTriangles) {
   vec3 closestIntersection = vec3(INF);
-  RayTriangleIntersection closestInt = RayTriangleIntersection(vec3(INF), INF, ModelTriangle(), Colour(255,255,255));
+  RayTriangleIntersection closestInt = RayTriangleIntersection(vec3(INF), vec3(INF), ModelTriangle());
   closestInt.intersectedTriangle.colour = Colour(0, 0, 0);
 
-  for (int i = 0; i < (int)modelTriangles.size(); i++) {
-    vec3 e0 = modelTriangles[i].vertices[1] - modelTriangles[i].vertices[0];
-    vec3 e1 = modelTriangles[i].vertices[2] - modelTriangles[i].vertices[0];
-    vec3 SPVector = camera.position - modelTriangles[i].vertices[0];
+  for (int i = 0; i < (int)unculledTriangles.size(); i++) {
+    vec3 e0 = unculledTriangles[i].vertices[1] - unculledTriangles[i].vertices[0];
+    vec3 e1 = unculledTriangles[i].vertices[2] - unculledTriangles[i].vertices[0];
+    vec3 SPVector = camera.position - unculledTriangles[i].vertices[0];
     mat3 DEMatrix(-rayDirection, e0, e1);
     vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
 
     if (isInTriangle(possibleSolution) && abs(possibleSolution.x) <= abs(closestIntersection.x)) {
       closestIntersection = possibleSolution;
       vec3 position = camera.position + (closestIntersection.x * rayDirection);
-      if (modelTriangles[i].textureFileIndex != -1) {
-          closestInt = RayTriangleIntersection(position, closestIntersection.x, modelTriangles[i], getTextureIntersection(closestIntersection, modelTriangles[i]));
-      }
-      else closestInt = RayTriangleIntersection(position, closestIntersection.x, modelTriangles[i], modelTriangles[i].colour);
+      closestInt = RayTriangleIntersection(position, closestIntersection, unculledTriangles[i]);
     }
   }
 
@@ -368,15 +402,31 @@ float calculateBrightness(RayTriangleIntersection intersection) {
 
   if (!isInShadow(pointLightVector, r, intersection)) {
     brightness = pointLight.strength / (2 * PI * r * r);
-    float normalisedAngleOfInc = dot(normalize(cross(e0, e1)), normalize(pointLightVector));
-    if (normalisedAngleOfInc < 0) normalisedAngleOfInc = 0;
-    brightness *= normalisedAngleOfInc;
+    
+    if (!intersection.intersectedTriangle.hasNormals) {
+      float normalisedAngleOfInc = dot(normalize(cross(e0, e1)), normalize(pointLightVector));
+      if (normalisedAngleOfInc < 0) normalisedAngleOfInc = 0;
+      brightness *= normalisedAngleOfInc;
+    }
+    else brightness *= phongShader(intersection);
   }
 
   if (brightness > 1.0) brightness = 1.0;
   else if ( brightness < ambientBrightness) brightness = ambientBrightness;
 
   return brightness;
+}
+
+float phongShader(RayTriangleIntersection intersection) {
+  ModelTriangle intTriangle = intersection.intersectedTriangle;
+  vec3 pointLightVector = normalize(pointLight.position - intersection.intersectionPoint);
+  vec3 cameraVector = normalize(camera.position - intersection.intersectionPoint);
+  vec3 localInt = intersection.localIntersection;
+  vec3 pixelNormal = normalize(((1 - localInt.y - localInt.z) * intTriangle.vertices[0]) + (localInt.y * intTriangle.vertices[1]) + (localInt.z * intTriangle.vertices[2]));
+  vec3 reflection = normalize((2*dot(pointLightVector, pixelNormal) * pixelNormal) - pointLightVector);
+
+  float result = pow(dot(cameraVector, reflection), 32);
+  return result;
 }
 
 bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleIntersection self) {
@@ -670,6 +720,7 @@ unordered_map<string, Colour> loadMaterial(string file) {
 void loadOBJ(const char* OBJFile, float scaleFactor) { 
   unordered_map<string, Colour> colourPalette;
   vector<vec3> vertices;
+  vector<vec3> vertexNormals;
   vector<vec2> textureVertices;
   vector<vector<uint32_t>> ppmFile;
   string materialFile;
@@ -711,6 +762,10 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
       string* tokens = split(lineString, ' ');
       textureVertices.push_back(vec2(stof(*(tokens + 1)), stof(*(tokens + 2))));
     }
+    else if (line[0] == 'v' && line[1] == 'n') {
+      string* tokens = split(lineString, ' ');
+      vertexNormals.push_back(vec3(stof(*(tokens + 1)), stof(*(tokens + 2)), stof(*(tokens + 3))));
+    }
     else if (line[0] == 'v') {
       string* tokens = split(lineString, ' ');
       vertices.push_back(vec3(stof(*(tokens + 1)), stof(*(tokens + 2)), stof(*(tokens + 3))));
@@ -718,13 +773,18 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
     else if (line[0] == 'f') {
       string* spaceTokens = split(lineString, ' ');
       vector<string> v;
+      vector<string> vn;
       vector<string> vt;
       for (int i = 1; i < 4; i++) {
         string* slashTokens = split(*(spaceTokens + i), '/');
         v.push_back(*(slashTokens + 0));
         if (!textureVertices.empty()) vt.push_back(*(slashTokens + 1));
+        if (!vertexNormals.empty()) vn.push_back(*(slashTokens + 2));
       }
-      if (textureVertices.empty()) modelTriangles.push_back(ModelTriangle( vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, currentColour));
+      if (textureVertices.empty()) {
+        if (vertexNormals.empty()) modelTriangles.push_back(ModelTriangle( vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, currentColour));
+        else modelTriangles.push_back(ModelTriangle( vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, vertices[stoi(vn[0]) - 1], vertices[stoi(vn[1]) - 1], vertices[stoi(vn[2]) - 1], currentColour));
+      }
       else {
         int ppmWidth = (int)ppmFile[1].size()-1;
         int ppmHeight = (int)ppmFile[0].size()-1;
