@@ -97,6 +97,7 @@ void drawStrokedTriangle(CanvasTriangle triangle);
 void drawFilledTriangle(CanvasTriangle triangle);
 void drawTexturedTriangle(CanvasTriangle triangle, int textureFileIndex);
 void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1);
+uint32_t getRaytraceColour(int x, int y, float offsetX, float offsetY, vector<ModelTriangle> unculledTriangles);
 void threadRaytrace();
 RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vector<ModelTriangle> unculledTriangles);
 Colour getTextureIntersection(vec3 intersection, ModelTriangle modelTriangle);
@@ -162,7 +163,7 @@ void update() {
   vector<CanvasTriangle> newCanvasTriangles;
   vector<ModelTriangle> unculledTriangles = backFaceCull();
   for (int i = 0; i < (int)unculledTriangles.size(); i++) {
-    newCanvasTriangles.push_back(get2DProjection(unculledTriangles[i], camera));   
+    newCanvasTriangles.push_back(get2DProjection(unculledTriangles[i], camera));
   }
 
   canvasTriangles = newCanvasTriangles;
@@ -191,7 +192,7 @@ vector<ModelTriangle> backFaceCull() {
 
     vec3 faceDir = normalize(cross(e1, e0));
     float dotProd = dot(diff, faceDir);
-    
+
     if (dotProd < 0) unculledTriangles.push_back(modelTriangles[i]);
   }
 
@@ -243,7 +244,7 @@ CanvasTriangle get2DProjection(ModelTriangle modelTriangle, Camera camera) {
     if (modelTriangle.textureVertices[0].x != -1) point.texturePoint = TexturePoint(modelTriangle.textureVertices[i].x, modelTriangle.textureVertices[i].y);
     projectionPoints.push_back(point);
   }
-  
+
   if (modelTriangle.textureVertices[0].x != -1) return CanvasTriangle(projectionPoints[0], projectionPoints[1], projectionPoints[2], modelTriangle.textureFileIndex);
   else return CanvasTriangle(projectionPoints[0], projectionPoints[1], projectionPoints[2], modelTriangle.colour);
 }
@@ -291,7 +292,7 @@ void drawFilledTriangle(CanvasTriangle triangle) {
 void drawTexturedTriangle(CanvasTriangle triangle, int textureFileIndex) {
   vector<CanvasTriangle> triangles = splitTriangle(triangle); // Preserves texture points (calculates new texturePoint for midpoint)
   vector<vector<uint32_t>> texturePixelValues = textureFiles[textureFileIndex]; // Loads texture from file
-  
+
   for (int i = 0; i < 2; i++) { // Loops through both flat-bottomed triangles
     // Finds the number of steps to use for linear interpolation of canvas triangle
     float lineLeftNumberOfSteps = getLerpNumberOfSteps(triangles[i].vertices[0], triangles[i].vertices[1]);
@@ -306,7 +307,7 @@ void drawTexturedTriangle(CanvasTriangle triangle, int textureFileIndex) {
     float lineLeftNumberOfStepsTex = getLerpNumberOfSteps(triangles[i].vertices[0].texturePoint, triangles[i].vertices[1].texturePoint);
     float lineRightNumberOfStepsTex = getLerpNumberOfSteps(triangles[i].vertices[0].texturePoint, triangles[i].vertices[2].texturePoint);
     float numberOfStepsTex = std::max(lineLeftNumberOfStepsTex, lineRightNumberOfStepsTex);
-    
+
     // Performs linear interpolation on texture triangle
     vector<CanvasPoint> lineLeftTex  = interpolate2D(triangles[i].vertices[0].texturePoint, triangles[i].vertices[1].texturePoint, numberOfStepsTex);
     vector<CanvasPoint> lineRightTex = interpolate2D(triangles[i].vertices[0].texturePoint, triangles[i].vertices[2].texturePoint, numberOfStepsTex);
@@ -338,26 +339,52 @@ void threadRaytrace() {
 
 void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1) {
   vector<ModelTriangle> unculledTriangles = backFaceCull();
+  int w = x1 - x0 + 1; int h = y1 - y0 + 1;
+  uint32_t** offsetPixels = new uint32_t*[w];
+  for(int i = 0; i < w; ++i) {
+    offsetPixels[i] = new uint32_t[h];
+    for (int j = 0; j < h; j++) offsetPixels[i][j] = 0;
+  }
 
   for (int x = x0; x < x1; x++) {
     for (int y = y0; y < y1; y++) {
-      vec3 rayDirection = vec3(x - WIDTH/2, y - HEIGHT/2, FOCALLENGTH) * camera.rotation; 
-      RayTriangleIntersection intersection = getClosestIntersection(rayDirection, unculledTriangles);
+      uint32_t pixel = getRaytraceColour(x, y, 0, 0, unculledTriangles);
+      int oX = x % (x1 - x0); int oY = y % (y1 - y0);
+      if (offsetPixels[oX][oY] == 0) offsetPixels[oX][oY] = getRaytraceColour(x, y, -0.5, -0.5, unculledTriangles);
+      if (offsetPixels[oX+1][oY] == 0) offsetPixels[oX+1][oY] = getRaytraceColour(x, y, 0.5, 0.5, unculledTriangles);
+      if (offsetPixels[oX][oY+1] == 0) offsetPixels[oX][oY+1] = getRaytraceColour(x, y, -0.5, 0.5, unculledTriangles);
+      if (offsetPixels[oX+1][oY+1] == 0) offsetPixels[oX+1][oY+1] = getRaytraceColour(x, y, 0.5, -0.5, unculledTriangles);
+      uint32_t topLeft = offsetPixels[oX][oY]; uint32_t topRight = offsetPixels[oX+1][oY];
+      uint32_t bottomLeft = offsetPixels[oX][oY+1]; uint32_t bottomRight = offsetPixels[oX+1][oY+1];
+
       int flippedX = WIDTH - x - 1;
+      
+      Colour colour;
+      colour.red = (((pixel & 0x00FF0000) >> 16) * 0.5) + (((topLeft & 0x00FF0000) >> 16) + ((topRight & 0x00FF0000) >> 16) + ((bottomLeft & 0x00FF0000) >> 16) + ((bottomRight & 0x00FF0000) >> 16)) * 0.125;
+      colour.green = (((pixel & 0x0000FF00) >> 8) * 0.5) + (((topLeft & 0x0000FF00) >> 8) + ((topRight & 0x0000FF00) >> 8) + ((bottomLeft & 0x0000FF00) >> 8) + ((bottomRight & 0x0000FF00) >> 8)) * 0.125;
+      colour.blue = (((pixel & 0x000000FF) >> 0) * 0.5) + ((topLeft & 0x000000FF) + (topRight & 0x000000FF) + (bottomLeft & 0x000000FF) + (bottomRight & 0x000000FF)) * 0.125;
 
-      if (intersection.localIntersection.x == INF) window.setPixelColour(flippedX, y, BLACK);
-      else {
-        Colour colour;
-        if (intersection.intersectedTriangle.textureFileIndex != -1) {
-          colour = getTextureIntersection(intersection.localIntersection, intersection.intersectedTriangle);
-        }
-        else colour = intersection.intersectedTriangle.colour;
-
-        float brightness = calculateBrightness(intersection);
-        uint32_t packedColour = (255<<24) + (int(colour.red*brightness)<<16) + (int(colour.green*brightness)<<8) + int(colour.blue*brightness);    
-        window.setPixelColour(flippedX, y, packedColour);
-      }     
+      uint32_t packedColour = (255<<24) + (int(colour.red)<<16) + (int(colour.green)<<8) + int(colour.blue);
+      window.setPixelColour(flippedX, y, packedColour);
     }
+  }
+}
+
+uint32_t getRaytraceColour(int x, int y, float offsetX, float offsetY, vector<ModelTriangle> unculledTriangles) {
+  vec3 rayDirection = vec3(x - WIDTH/2 + offsetX, y - HEIGHT/2 + offsetY, FOCALLENGTH) * camera.rotation;
+  RayTriangleIntersection intersection = getClosestIntersection(rayDirection, unculledTriangles);
+
+  if (intersection.localIntersection.x == INF) return BLACK;
+  else {
+    Colour colour;
+    if (intersection.intersectedTriangle.textureFileIndex != -1) {
+      colour = getTextureIntersection(intersection.localIntersection, intersection.intersectedTriangle);
+    }
+    else colour = intersection.intersectedTriangle.colour;
+    float brightness = calculateBrightness(intersection);
+    uint32_t packedColour = (255<<24) + (int(colour.red*brightness)<<16) + (int(colour.green*brightness)<<8) + int(colour.blue*brightness);    
+        
+    return packedColour;
   }
 }
 
@@ -388,7 +415,7 @@ Colour getTextureIntersection(vec3 intersection, ModelTriangle modelTriangle) {
   vec2 e1 = modelTriangle.textureVertices[2] - modelTriangle.textureVertices[0];
   vec2 value = modelTriangle.textureVertices[0] + (e0 * intersection.y) + (e1 * intersection.z);
   uint32_t colour = textureFiles[modelTriangle.textureFileIndex][value.x][value.y];
-  
+
   return Colour((colour & 0x00FF0000) >> 16, (colour & 0x0000FF00) >> 8, (colour & 0x000000FF) >> 0);
 }
 
@@ -402,7 +429,7 @@ float calculateBrightness(RayTriangleIntersection intersection) {
 
   if (!isInShadow(pointLightVector, r, intersection)) {
     brightness = pointLight.strength / (2 * PI * r * r);
-    
+
     if (!intersection.intersectedTriangle.hasNormals) {
       float normalisedAngleOfInc = dot(normalize(cross(e0, e1)), normalize(pointLightVector));
       if (normalisedAngleOfInc < 0) normalisedAngleOfInc = 0;
@@ -410,6 +437,18 @@ float calculateBrightness(RayTriangleIntersection intersection) {
     }
     else brightness *= phongShader(intersection);
   }
+  /*
+  brightness = pointLight.strength / (2 * PI * r * r);
+
+  if (!intersection.intersectedTriangle.hasNormals) {
+    float normalisedAngleOfInc = dot(normalize(cross(e0, e1)), normalize(pointLightVector));
+    if (normalisedAngleOfInc < 0) normalisedAngleOfInc = 0;
+    brightness *= normalisedAngleOfInc;
+  }
+  else brightness *= phongShader(intersection);
+
+  brightness -= softShadow(intersection, lightPoints);
+  */
 
   if (brightness > 1.0) brightness = 1.0;
   else if ( brightness < ambientBrightness) brightness = ambientBrightness;
@@ -443,6 +482,23 @@ bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleInterse
     }
   }
   return false;
+}
+
+/*
+float softShadow(RayTriangleIntersection self, vector<PointLight> lightPoints) {
+  float shadow = 0;
+
+  for(int i = 0; i < lightPoints.size(); i++) {
+    vec3 pointLightVector = lightPoints[i].position - intersection.intersectionPoint;
+    float r = length(pointLightVector);
+    if(isInShadow(pointLightVector, distanceToLight, self)) shadow += 0.5f;
+  }
+  return shadow;
+}
+*/
+
+void antiAliase() {
+  vector<vector<int>> pixelBuffer;
 }
 
 inline bool isInTriangle(vec3 intersectionPoint) {
@@ -545,7 +601,7 @@ vector<CanvasTriangle> splitTriangle(CanvasTriangle triangle) {
       }
       else midPoint = triangle.vertices[i];
     }
-   
+
     // Check if triangle is already flatBottomed, if it is then there is no need
     // to split it so just repack it with the vertices in the correct order
     if (isFlatBotttomedTriangle(triangle)) {
@@ -556,15 +612,15 @@ vector<CanvasTriangle> splitTriangle(CanvasTriangle triangle) {
 
       return splitTriangles;
     }
-    
+
     CanvasPoint interpolatedPoint = getInterpolatedPoint(maxPoint, midPoint, minPoint);
-    
+
     // Define both flat bottomed triangles
     CanvasTriangle topTriangle = CanvasTriangle(maxPoint, midPoint, interpolatedPoint, triangle.colour);
     CanvasTriangle bottomTriangle = CanvasTriangle(minPoint, midPoint, interpolatedPoint, triangle.colour);
     splitTriangles.push_back(topTriangle);
     splitTriangles.push_back(bottomTriangle);
-    
+
     return splitTriangles;
 }
 
@@ -579,14 +635,14 @@ CanvasPoint getInterpolatedPoint(CanvasPoint maxPoint, CanvasPoint midPoint, Can
   for (float i = 0.0; i < numberOfSteps; i++) {
     if (round(points[i].y) == round(midPoint.y)) { // Found the correct y value
       interpolatedPoint = CanvasPoint(points[i].x, points[i].y, points[i].depth); // Create the correct point
-      
+
       if (maxPoint.texturePoint.x != -1) { // Find the interpolated texture point if texture points are set
         float numberOfStepsTex = getLerpNumberOfSteps(maxPoint.texturePoint, minPoint.texturePoint);
         if (numberOfStepsTex == 0) numberOfStepsTex = 1;
         vector<CanvasPoint> textureLine = interpolate2D(maxPoint.texturePoint, minPoint.texturePoint, numberOfStepsTex);
         //cout << textureLine.size() << " " << i << " " << i/numberOfSteps << " " << numberOfSteps << " " << numberOfStepsTex << endl;
         CanvasPoint interpolatedPointTex = textureLine[round((i / numberOfSteps) * numberOfStepsTex) ];
-        interpolatedPoint.texturePoint = TexturePoint(round(interpolatedPointTex.x), round(interpolatedPointTex.y));       
+        interpolatedPoint.texturePoint = TexturePoint(round(interpolatedPointTex.x), round(interpolatedPointTex.y));
       }
     }
   }
@@ -712,19 +768,19 @@ unordered_map<string, Colour> loadMaterial(string file) {
     tmp = newMtlString.find("newmtl");
     colourPalette.insert({name, colourValue});
   }
-  
+
   return colourPalette;
 }
 
 // Loads all triangle geometry from OBJ file into ModelTrangles vector
-void loadOBJ(const char* OBJFile, float scaleFactor) { 
+void loadOBJ(const char* OBJFile, float scaleFactor) {
   unordered_map<string, Colour> colourPalette;
   vector<vec3> vertices;
   vector<vec3> vertexNormals;
   vector<vec2> textureVertices;
   vector<vector<uint32_t>> ppmFile;
   string materialFile;
-  
+
   ifstream ifs;
   ifs.open (OBJFile, std::ifstream::in);
 
@@ -739,7 +795,7 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
       string* mtlTokens = split(lineString, ' ');
       materialFile = *(mtlTokens + 1);
       materialFile.erase(remove_if(materialFile.begin(), materialFile.end(), ::isspace), materialFile.end());
-      
+
       ifstream mtlIfs;
       mtlIfs.open(materialFile, std::ifstream::in);
       char mtlLine[256];
@@ -753,10 +809,10 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
       }
       else colourPalette = loadMaterial(materialFile);
     }
-        
+
     if (lineString.find("usemtl") != string::npos) {
       string* tokens = split(lineString, ' ');
-      currentColour = colourPalette.at(*(tokens + 1));  
+      currentColour = colourPalette.at(*(tokens + 1));
     }
     else if (line[0] == 'v' && line[1] == 't') {
       string* tokens = split(lineString, ' ');
@@ -788,14 +844,14 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
       else {
         int ppmWidth = (int)ppmFile[1].size()-1;
         int ppmHeight = (int)ppmFile[0].size()-1;
-        
+
         vec2 texturePoint0 = vec2(round(textureVertices[stoi(vt[0]) - 1].x * ppmWidth), round(textureVertices[stoi(vt[0]) - 1].y * ppmHeight));
         vec2 texturePoint1 = vec2(round(textureVertices[stoi(vt[1]) - 1].x * ppmWidth), round(textureVertices[stoi(vt[1]) - 1].y * ppmHeight));
         vec2 texturePoint2 = vec2(round(textureVertices[stoi(vt[2]) - 1].x * ppmWidth), round(textureVertices[stoi(vt[2]) - 1].y * ppmHeight));
-        modelTriangles.push_back(ModelTriangle( vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, texturePoint0, texturePoint1, texturePoint2, textureFiles.size()-1)); 
+        modelTriangles.push_back(ModelTriangle( vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, texturePoint0, texturePoint1, texturePoint2, textureFiles.size()-1));
       }
     }
-  } 
+  }
 }
 
 // Loads a texture from a ppm into a 2D vector
