@@ -5,6 +5,10 @@
         "ostream": "cpp",
         "iostream": "cpp",
         "thread": "cpp",
-        "array": "cpp"
+        "array": "cpp",
+        "limits": "cpp",
+        "cmath": "cpp",
+        "functional": "cpp",
+        "list": "cpp"
     }
 }

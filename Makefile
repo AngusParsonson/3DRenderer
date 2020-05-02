@@ -23,7 +23,7 @@ GLM_COMPILER_FLAGS := -I./libs/glm
 SDL_COMPILER_FLAGS := $(shell sdl2-config --cflags)
 # If you have a manual install of SDL, you might not have sdl2-config. Linker flags should be something like: -L/usr/local/lib -lSDL2
 SDL_LINKER_FLAGS := $(shell sdl2-config --libs)
-SDW_LINKER_FLAGS := $(WINDOW_OBJECT) -pthread
+SDW_LINKER_FLAGS := $(WINDOW_OBJECT) -pthread -lboost_system -lpthread -lboost_thread
 
 default: diagnostic
 

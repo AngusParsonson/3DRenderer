@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <math.h>
 #include <thread>
+#include <time.h> 
+#include <boost/thread/thread.hpp>
 
 using namespace std;
 using namespace glm;
@@ -33,6 +35,32 @@ struct PointLight {
     position = pos;
     if (str > 350) strength = 350;
     else strength = str;
+  }
+};
+
+struct AreaLight {
+  vector<PointLight> pointLights;
+  AreaLight(vec3 pos, float str, float spread, int numLights) {
+    srand(time(0));
+    pointLights.push_back(PointLight(pos, str));
+
+    for (int i = 0; i < numLights; i++) {
+      float x; float y; float z;
+
+      int xRan = rand()%2;
+      if (xRan == 0)  x = pos.x + (spread * 1.0f/(rand()%100));
+      else x = pos.x - (spread * 1.0f/(rand()%100));
+
+      int yRan = rand()%2;
+      if (yRan == 0)  y = pos.y + (spread * 1.0f/(rand()%100));
+      else y = pos.y - (spread * 1.0f/(rand()%100));
+
+      int zRan = rand()%2;
+      if (zRan == 0)  z = pos.z + (spread * 1.0f/(rand()%100));
+      else z = pos.z - (spread * 1.0f/(rand()%100));
+
+      pointLights.push_back(PointLight(vec3(x, y, z), str));
+    }
   }
 };
 
@@ -98,14 +126,16 @@ void drawFilledTriangle(CanvasTriangle triangle);
 void drawTexturedTriangle(CanvasTriangle triangle, int textureFileIndex);
 void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1);
 uint32_t getRaytraceColour(int x, int y, float offsetX, float offsetY, vector<ModelTriangle> unculledTriangles);
-void threadRaytrace();
+void threadRaytrace(int numThreads);
 RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vector<ModelTriangle> unculledTriangles);
 Colour getTextureIntersection(vec3 intersection, ModelTriangle modelTriangle);
 bool isInTriangle(vec3 intersectionPoint);
 bool isTriangleSelf(ModelTriangle self, ModelTriangle tri);
 float calculateBrightness(RayTriangleIntersection intersection);
-bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleIntersection self);
+bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleIntersection self, float pointLight);
+float softShadow(RayTriangleIntersection self);
 float phongShader(RayTriangleIntersection intersection);
+Colour mirror(RayTriangleIntersection intersection);
 vector<CanvasPoint> interpolate2D(CanvasPoint from, CanvasPoint to, float numberOfValues);
 vector<CanvasPoint> interpolate2D(TexturePoint from, TexturePoint to, float numberOfValues);
 vector<CanvasPoint> interpolate3D(CanvasPoint from, CanvasPoint to, float numberOfValues);
@@ -129,8 +159,9 @@ int savedPPMs = 0;
 
 DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
 Camera camera = Camera(0, 2, 4);
-PointLight pointLight = PointLight(vec3(-0.3, 4.8, 0), 150);
-float ambientBrightness = pointLight.strength / 350;
+//PointLight pointLight = PointLight(vec3(-0.3, 4.8, -3.1), 150);
+AreaLight areaLight = AreaLight(vec3(-0.3, 3.5, -3.1), 150, 2, 20);
+float ambientBrightness = areaLight.pointLights[0].strength / 350;
 float specular = 0.5;
 float diffuse = 0.5;
 vector<ModelTriangle> modelTriangles;
@@ -142,7 +173,7 @@ int main(int argc, char* argv[])
   SDL_Event event;
   loadOBJ("cornell-box.obj", 1);
   //loadOBJ("logo.obj", 0.01);
-  loadOBJ("sphere.obj", 0.5);
+  //loadOBJ("sphere.obj", 0.5);
   update();
 
   while(true)
@@ -222,7 +253,7 @@ void draw() {
     }
   }
 
-  else if (camera.drawingMode == RAYTRACE) threadRaytrace();
+  else if (camera.drawingMode == RAYTRACE) threadRaytrace(64);
 }
 
 // Convert 3D triangle onto canvas space
@@ -328,13 +359,27 @@ void drawTexturedTriangle(CanvasTriangle triangle, int textureFileIndex) {
   }
 }
 
-void threadRaytrace() {
-    thread th1(drawFilledTrianglesRaytrace, 0, WIDTH/2, 0, HEIGHT/2);
-    thread th2(drawFilledTrianglesRaytrace, WIDTH/2, WIDTH, 0, HEIGHT/2);
-    thread th3(drawFilledTrianglesRaytrace, 0, WIDTH/2, HEIGHT/2, HEIGHT);
-    thread th4(drawFilledTrianglesRaytrace, WIDTH/2, WIDTH, HEIGHT/2, HEIGHT);
+void threadRaytrace(int numThreads) {
+  vector<boost::thread*> threads;
+  int rowColLength = sqrt(numThreads);
+  int xSize = WIDTH / rowColLength;
+  int ySize = HEIGHT / rowColLength;
 
-    th1.join(); th2.join(); th3.join(); th4.join();
+  for (int x = 0; x < rowColLength; x++) {
+    int xStart = x*xSize;
+    int xEnd = xStart + xSize;
+
+    for (int y = 0; y < rowColLength; y++) {
+      int yStart = y*ySize;
+      int yEnd = yStart + ySize;
+      boost::thread* name = new boost::thread(drawFilledTrianglesRaytrace, xStart, xEnd, yStart, yEnd);
+      threads.push_back(name);
+    }
+  }
+  for (int i = 0; i < (int)threads.size(); i++) threads[i]->join();
+  
+
+  //drawFilledTrianglesRaytrace(0, WIDTH, 0, HEIGHT);
 }
 
 void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1) {
@@ -380,6 +425,11 @@ uint32_t getRaytraceColour(int x, int y, float offsetX, float offsetY, vector<Mo
     if (intersection.intersectedTriangle.textureFileIndex != -1) {
       colour = getTextureIntersection(intersection.localIntersection, intersection.intersectedTriangle);
     }
+    /*
+    else if(mirrored){
+      colour = mirror(intersection);
+    }
+    */
     else colour = intersection.intersectedTriangle.colour;
     float brightness = calculateBrightness(intersection);
     uint32_t packedColour = (255<<24) + (int(colour.red*brightness)<<16) + (int(colour.green*brightness)<<8) + int(colour.blue*brightness);    
@@ -420,25 +470,16 @@ Colour getTextureIntersection(vec3 intersection, ModelTriangle modelTriangle) {
 }
 
 float calculateBrightness(RayTriangleIntersection intersection) {
-  vec3 pointLightVector = pointLight.position - intersection.intersectionPoint;
+  vec3 pointLightVector = areaLight.pointLights[0].position - intersection.intersectionPoint;
   float r = length(pointLightVector);
   float brightness = 0;
 
   vec3 e0 = intersection.intersectedTriangle.vertices[1] - intersection.intersectedTriangle.vertices[0];
   vec3 e1 = intersection.intersectedTriangle.vertices[2] - intersection.intersectedTriangle.vertices[0];
-
-  if (!isInShadow(pointLightVector, r, intersection)) {
-    brightness = pointLight.strength / (2 * PI * r * r);
-
-    if (!intersection.intersectedTriangle.hasNormals) {
-      float normalisedAngleOfInc = dot(normalize(cross(e0, e1)), normalize(pointLightVector));
-      if (normalisedAngleOfInc < 0) normalisedAngleOfInc = 0;
-      brightness *= normalisedAngleOfInc;
-    }
-    else brightness *= phongShader(intersection);
-  }
-  /*
-  brightness = pointLight.strength / (2 * PI * r * r);
+  
+  brightness = areaLight.pointLights[0].strength / (2 * PI * r * r);
+  
+  
 
   if (!intersection.intersectedTriangle.hasNormals) {
     float normalisedAngleOfInc = dot(normalize(cross(e0, e1)), normalize(pointLightVector));
@@ -447,8 +488,7 @@ float calculateBrightness(RayTriangleIntersection intersection) {
   }
   else brightness *= phongShader(intersection);
 
-  brightness -= softShadow(intersection, lightPoints);
-  */
+  brightness *= softShadow(intersection);
 
   if (brightness > 1.0) brightness = 1.0;
   else if ( brightness < ambientBrightness) brightness = ambientBrightness;
@@ -458,22 +498,34 @@ float calculateBrightness(RayTriangleIntersection intersection) {
 
 float phongShader(RayTriangleIntersection intersection) {
   ModelTriangle intTriangle = intersection.intersectedTriangle;
-  vec3 pointLightVector = normalize(pointLight.position - intersection.intersectionPoint);
+  vec3 pointLightVector = normalize(areaLight.pointLights[0].position - intersection.intersectionPoint);
   vec3 cameraVector = normalize(camera.position - intersection.intersectionPoint);
   vec3 localInt = intersection.localIntersection;
   vec3 pixelNormal = normalize(((1 - localInt.y - localInt.z) * intTriangle.vertices[0]) + (localInt.y * intTriangle.vertices[1]) + (localInt.z * intTriangle.vertices[2]));
   vec3 reflection = normalize((2*dot(pointLightVector, pixelNormal) * pixelNormal) - pointLightVector);
 
-  float result = pow(dot(cameraVector, reflection), 32);
+  float result = pow(dot(cameraVector, reflection), 16);
   return result;
 }
 
-bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleIntersection self) {
+/*
+Colour mirror(RayTriangleIntersection intersection) {
+  ModelTriangle intTriangle = intersection.intersectedTriangle;
+  vec3 cameraVector = normalize(camera.position - intersection.intersectionPoint);
+  vec3 localInt = intersection.localIntersection;
+  vec3 pixelNormal = normalize(((1 - localInt.y - localInt.z) * intTriangle.vertices[0]) + (localInt.y * intTriangle.vertices[1]) + (localInt.z * intTriangle.vertices[2]));
+  vec3 reflection = normalize((2*dot(cameraVector, pixelNormal) * pixelNormal) - cameraVector);
+  RayTriangleIntersection reflectedIntersection = getClosestIntersection(reflection, unculledTriangles);
+  return reflectedIntersection.intersectedTriangle.colour;
+}
+*/
+
+bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleIntersection self, float pointLight) {
   for (int i = 0; i < (int)modelTriangles.size(); i++) {
     if (isTriangleSelf(self.intersectedTriangle, modelTriangles[i])) continue;
     vec3 e0 = modelTriangles[i].vertices[1] - modelTriangles[i].vertices[0];
     vec3 e1 = modelTriangles[i].vertices[2] - modelTriangles[i].vertices[0];
-    vec3 SLVector = pointLight.position - modelTriangles[i].vertices[0];
+    vec3 SLVector = areaLight.pointLights[pointLight].position - modelTriangles[i].vertices[0];
     mat3 DEMatrix(-normalize(pointLightVector), e0, e1);
     vec3 possibleSolution = glm::inverse(DEMatrix) * SLVector;
 
@@ -484,21 +536,18 @@ bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleInterse
   return false;
 }
 
-/*
-float softShadow(RayTriangleIntersection self, vector<PointLight> lightPoints) {
+float softShadow(RayTriangleIntersection self) {
   float shadow = 0;
 
-  for(int i = 0; i < lightPoints.size(); i++) {
-    vec3 pointLightVector = lightPoints[i].position - intersection.intersectionPoint;
+  for(int i = 0; i < (int)areaLight.pointLights.size(); i++) {
+    vec3 pointLightVector = areaLight.pointLights[i].position - self.intersectionPoint;
     float r = length(pointLightVector);
-    if(isInShadow(pointLightVector, distanceToLight, self)) shadow += 0.5f;
+    if(isInShadow(pointLightVector, r, self, i)) {
+      //cout << i << endl;
+      shadow += 1.0f;
+    }
   }
-  return shadow;
-}
-*/
-
-void antiAliase() {
-  vector<vector<int>> pixelBuffer;
+  return (1 - shadow/areaLight.pointLights.size());
 }
 
 inline bool isInTriangle(vec3 intersectionPoint) {
