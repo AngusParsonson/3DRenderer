@@ -136,7 +136,9 @@ float calculateBrightness(RayTriangleIntersection intersection);
 bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleIntersection self, float pointLight);
 float softShadow(RayTriangleIntersection self);
 float phongShader(RayTriangleIntersection intersection);
-Colour mirror(RayTriangleIntersection intersection, vector<ModelTriangle> unculledTriangles);
+Colour mirror(RayTriangleIntersection intersection);
+RayTriangleIntersection glass(RayTriangleIntersection intersection, vec3 fromPosition, vector<ModelTriangle> unculledTriangles);
+vec3 getRefraction(vec3 incidentRay, vec3 pixelNormal, float refractiveIndex);
 vector<CanvasPoint> interpolate2D(CanvasPoint from, CanvasPoint to, float numberOfValues);
 vector<CanvasPoint> interpolate2D(TexturePoint from, TexturePoint to, float numberOfValues);
 vector<CanvasPoint> interpolate3D(CanvasPoint from, CanvasPoint to, float numberOfValues);
@@ -154,6 +156,7 @@ bool clipping(ModelTriangle triangle);
 vector<ModelTriangle> backFaceCull();
 bool pixelClipping(float z);
 inline bool isMirror(ModelTriangle triangle);
+inline bool isGlass(ModelTriangle triangle);
 
 uint32_t BLACK = (255<<24) + (int(0)<<16) + (int(0)<<8) + int(0);
 double depthBuffer[WIDTH][HEIGHT] = { { INF } };
@@ -164,7 +167,7 @@ Camera camera = Camera(0, 2, 4);
 //PointLight pointLight = PointLight(vec3(-0.3, 4.8, -3.1), 150);
 AreaLight areaLight = AreaLight(vec3(-0.3, 3.5, -3.1), 150, 2, 0);
 float ambientBrightness = areaLight.pointLights[0].strength / 350;
-float specular = 0.5;
+float specularExponent = 16;
 float diffuse = 0.5;
 
 vector<ModelTriangle> modelTriangles;
@@ -430,7 +433,7 @@ uint32_t getRaytraceColour(int x, int y, float offsetX, float offsetY, vector<Mo
     }
     
     else if(isMirror(intersection.intersectedTriangle)){
-      colour = mirror(intersection, unculledTriangles);
+      colour = mirror(intersection);
     }
     
     else {
@@ -461,8 +464,8 @@ RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosit
       closestInt = RayTriangleIntersection(position, closestIntersection, unculledTriangles[i]);
     }
   }
-
-  return closestInt;
+  if (isGlass(closestInt.intersectedTriangle)) return glass(closestInt, fromPosition, unculledTriangles);
+  else return closestInt;
 }
 
 RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosition, ModelTriangle self, vector<ModelTriangle> unculledTriangles) {
@@ -483,8 +486,8 @@ RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosit
       closestInt = RayTriangleIntersection(position, closestIntersection, unculledTriangles[i]);
     }
   }
-
-  return closestInt;
+  if (isGlass(closestInt.intersectedTriangle)) return glass(closestInt, fromPosition, unculledTriangles);
+  else return closestInt;
 }
 
 Colour getTextureIntersection(vec3 intersection, ModelTriangle modelTriangle) {
@@ -512,7 +515,7 @@ float calculateBrightness(RayTriangleIntersection intersection) {
   }
   else brightness *= phongShader(intersection);
 
-  if (!isMirror(intersection.intersectedTriangle)) brightness *= softShadow(intersection);
+  if (!isMirror(intersection.intersectedTriangle) || !isGlass(intersection.intersectedTriangle)) brightness *= softShadow(intersection);
 
   if (brightness > 1.0) brightness = 1.0;
   else if ( brightness < ambientBrightness) brightness = ambientBrightness;
@@ -528,11 +531,11 @@ float phongShader(RayTriangleIntersection intersection) {
   vec3 pixelNormal = normalize(((1 - localInt.y - localInt.z) * intTriangle.vertices[0]) + (localInt.y * intTriangle.vertices[1]) + (localInt.z * intTriangle.vertices[2]));
   vec3 reflection = normalize((2*dot(pointLightVector, pixelNormal) * pixelNormal) - pointLightVector);
 
-  float result = pow(dot(cameraVector, reflection), 16);
+  float result = pow(dot(cameraVector, reflection), specularExponent);
   return result;
 }
 
-Colour mirror(RayTriangleIntersection intersection, vector<ModelTriangle> unculledTriangles) {
+Colour mirror(RayTriangleIntersection intersection) {
   ModelTriangle intTriangle = intersection.intersectedTriangle;
   vec3 cameraVector = normalize(camera.position*camera.rotation - intersection.intersectionPoint);
   vec3 localInt = intersection.localIntersection;
@@ -555,6 +558,41 @@ Colour mirror(RayTriangleIntersection intersection, vector<ModelTriangle> uncull
   else return reflectedIntersection.intersectedTriangle.colour;
 }
 
+RayTriangleIntersection glass(RayTriangleIntersection intersection, vec3 fromPosition, vector<ModelTriangle> unculledTriangles) {
+  ModelTriangle intTriangle = intersection.intersectedTriangle;
+  vec3 incidentRay = normalize(fromPosition - intersection.intersectionPoint);
+  vec3 localInt = intersection.localIntersection;
+  vec3 pixelNormal;
+  if (intTriangle.hasNormals) {
+    pixelNormal = normalize(((1 - localInt.y - localInt.z) * intTriangle.vertices[0]) + (localInt.y * intTriangle.vertices[1]) + (localInt.z * intTriangle.vertices[2]));
+  }
+  else {
+    vec3 e0 = intTriangle.vertices[1] - intTriangle.vertices[0];
+    vec3 e1 = intTriangle.vertices[2] - intTriangle.vertices[0];
+    pixelNormal = normalize(cross(e1, e0));
+  }
+
+  vec3 refractedRay = getRefraction(incidentRay, pixelNormal, 1.5);
+  
+  return getClosestIntersection(refractedRay, intersection.intersectionPoint, intTriangle, unculledTriangles);
+}
+
+vec3 getRefraction(vec3 incidentRay, vec3 pixelNormal, float refractiveIndex) {
+  float cosI = clamp(-1.0f, 1.0f, dot(incidentRay, pixelNormal)); // positive if leaving, negative if entering
+  float etai = 1;
+  vec3 n = pixelNormal;
+
+  if (cosI < 0) cosI = -cosI;
+  else {
+    swap(etai, refractiveIndex);
+    n = -pixelNormal;
+  }
+
+  float eta = etai / refractiveIndex;
+  float k = 1 - eta * eta * (1 - cosI * cosI);
+  return k < 0 ? incidentRay : eta * incidentRay + (eta * cosI - sqrtf(k)) * n;;
+}
+
 
 bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleIntersection self, float pointLight) {
   for (int i = 0; i < (int)modelTriangles.size(); i++) {
@@ -565,7 +603,7 @@ bool isInShadow(vec3 pointLightVector, float distanceToLight, RayTriangleInterse
     mat3 DEMatrix(-normalize(pointLightVector), e0, e1);
     vec3 possibleSolution = glm::inverse(DEMatrix) * SLVector;
 
-    if (isInTriangle(possibleSolution) && abs(possibleSolution.x) < abs(distanceToLight) && possibleSolution.x < 0.001f) {
+    if (isInTriangle(possibleSolution) && abs(possibleSolution.x) < abs(distanceToLight) && possibleSolution.x < 0.001f && !isGlass(modelTriangles[i])) {
       return true;
     }
   }
@@ -733,6 +771,11 @@ CanvasPoint getInterpolatedPoint(CanvasPoint maxPoint, CanvasPoint midPoint, Can
   }
 
   return interpolatedPoint;
+}
+
+inline bool isGlass(ModelTriangle triangle) {
+  if (triangle.colour.red == 255 && triangle.colour.green == 0 && triangle.colour.blue == 0) return true;
+  else return false;
 }
 
 inline bool isMirror(ModelTriangle triangle) {
