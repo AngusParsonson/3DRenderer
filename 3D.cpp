@@ -128,6 +128,7 @@ void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1);
 uint32_t getRaytraceColour(int x, int y, float offsetX, float offsetY, vector<ModelTriangle> unculledTriangles);
 void threadRaytrace(int numThreads);
 RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosition, vector<ModelTriangle> unculledTriangles);
+RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosition, ModelTriangle self, vector<ModelTriangle> unculledTriangles);
 Colour getTextureIntersection(vec3 intersection, ModelTriangle modelTriangle);
 bool isInTriangle(vec3 intersectionPoint);
 bool isTriangleSelf(ModelTriangle self, ModelTriangle tri);
@@ -152,6 +153,7 @@ bool isFlatBotttomedTriangle(CanvasTriangle triangle);
 bool clipping(ModelTriangle triangle);
 vector<ModelTriangle> backFaceCull();
 bool pixelClipping(float z);
+inline bool isMirror(ModelTriangle triangle);
 
 uint32_t BLACK = (255<<24) + (int(0)<<16) + (int(0)<<8) + int(0);
 double depthBuffer[WIDTH][HEIGHT] = { { INF } };
@@ -427,13 +429,12 @@ uint32_t getRaytraceColour(int x, int y, float offsetX, float offsetY, vector<Mo
       colour = getTextureIntersection(intersection.localIntersection, intersection.intersectedTriangle);
     }
     
-    // else if(mirrored){
-    //   colour = mirror(intersection, unculledTriangles);
-    // }
+    else if(isMirror(intersection.intersectedTriangle)){
+      colour = mirror(intersection, unculledTriangles);
+    }
     
     else {
       colour = intersection.intersectedTriangle.colour;
-      if (colour.red == 255 && colour.blue == 255 && colour.green == 0) colour = mirror(intersection, unculledTriangles);
     }
     float brightness = calculateBrightness(intersection);
     uint32_t packedColour = (255<<24) + (int(colour.red*brightness)<<16) + (int(colour.green*brightness)<<8) + int(colour.blue*brightness);    
@@ -455,6 +456,28 @@ RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosit
     vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
 
     if (isInTriangle(possibleSolution) && abs(possibleSolution.x) <= abs(closestIntersection.x)) {
+      closestIntersection = possibleSolution;
+      vec3 position = fromPosition + (closestIntersection.x * rayDirection);
+      closestInt = RayTriangleIntersection(position, closestIntersection, unculledTriangles[i]);
+    }
+  }
+
+  return closestInt;
+}
+
+RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosition, ModelTriangle self, vector<ModelTriangle> unculledTriangles) {
+  vec3 closestIntersection = vec3(INF);
+  RayTriangleIntersection closestInt = RayTriangleIntersection(vec3(INF), vec3(INF), ModelTriangle());
+  closestInt.intersectedTriangle.colour = Colour(0, 0, 0);
+
+  for (int i = 0; i < (int)unculledTriangles.size(); i++) {
+    vec3 e0 = unculledTriangles[i].vertices[1] - unculledTriangles[i].vertices[0];
+    vec3 e1 = unculledTriangles[i].vertices[2] - unculledTriangles[i].vertices[0];
+    vec3 SPVector = fromPosition - unculledTriangles[i].vertices[0];
+    mat3 DEMatrix(-rayDirection, e0, e1);
+    vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
+
+    if (isInTriangle(possibleSolution) && abs(possibleSolution.x) <= abs(closestIntersection.x) && !isTriangleSelf(self, unculledTriangles[i])) {
       closestIntersection = possibleSolution;
       vec3 position = fromPosition + (closestIntersection.x * rayDirection);
       closestInt = RayTriangleIntersection(position, closestIntersection, unculledTriangles[i]);
@@ -489,7 +512,7 @@ float calculateBrightness(RayTriangleIntersection intersection) {
   }
   else brightness *= phongShader(intersection);
 
-  brightness *= softShadow(intersection);
+  if (!isMirror(intersection.intersectedTriangle)) brightness *= softShadow(intersection);
 
   if (brightness > 1.0) brightness = 1.0;
   else if ( brightness < ambientBrightness) brightness = ambientBrightness;
@@ -511,7 +534,7 @@ float phongShader(RayTriangleIntersection intersection) {
 
 Colour mirror(RayTriangleIntersection intersection, vector<ModelTriangle> unculledTriangles) {
   ModelTriangle intTriangle = intersection.intersectedTriangle;
-  vec3 cameraVector = normalize(camera.position - intersection.intersectionPoint);
+  vec3 cameraVector = normalize(camera.position*camera.rotation - intersection.intersectionPoint);
   vec3 localInt = intersection.localIntersection;
   vec3 pixelNormal;
   if (intTriangle.hasNormals) {
@@ -524,9 +547,12 @@ Colour mirror(RayTriangleIntersection intersection, vector<ModelTriangle> uncull
   }
 
   vec3 reflection = cameraVector - (2*dot(cameraVector, pixelNormal) * pixelNormal);
-  cout << reflection.x << " " << reflection.y << " " << reflection.z << endl;
-  RayTriangleIntersection reflectedIntersection = getClosestIntersection(reflection, intersection.intersectionPoint, modelTriangles);
-  return reflectedIntersection.intersectedTriangle.colour;
+  //cout << reflection.x << " " << reflection.y << " " << reflection.z << endl;
+  RayTriangleIntersection reflectedIntersection = getClosestIntersection(reflection, intersection.intersectionPoint, intTriangle, modelTriangles);
+  if (reflectedIntersection.intersectedTriangle.textureFileIndex != -1) {
+    return getTextureIntersection(intersection.localIntersection, intersection.intersectedTriangle);
+  }
+  else return reflectedIntersection.intersectedTriangle.colour;
 }
 
 
@@ -707,6 +733,11 @@ CanvasPoint getInterpolatedPoint(CanvasPoint maxPoint, CanvasPoint midPoint, Can
   }
 
   return interpolatedPoint;
+}
+
+inline bool isMirror(ModelTriangle triangle) {
+  if (triangle.colour.red == 255 && triangle.colour.green == 255 && triangle.colour.blue == 254) return true;
+  else return false;
 }
 
 inline bool isPixelOnScreen(int x, int y) {
