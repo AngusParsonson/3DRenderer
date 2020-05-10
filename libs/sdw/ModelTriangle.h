@@ -5,6 +5,7 @@
 class ModelTriangle
 {
   public:
+    std::string name;
     glm::vec3 vertices[3];
     Colour colour;
     glm::vec3 vertexNormals[3];
@@ -16,8 +17,9 @@ class ModelTriangle
     {
     }
 
-    ModelTriangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, Colour trigColour)
+    ModelTriangle(std::string nm, glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, Colour trigColour)
     {
+      name = nm;
       vertices[0] = v0;
       vertices[1] = v1;
       vertices[2] = v2;
@@ -25,8 +27,9 @@ class ModelTriangle
       colour = trigColour;
     }
     
-    ModelTriangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec3 vn0, glm::vec3 vn1, glm::vec3 vn2, Colour trigColour)
+    ModelTriangle(std::string nm, glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec3 vn0, glm::vec3 vn1, glm::vec3 vn2, Colour trigColour)
     {
+      name = nm;
       vertices[0] = v0;
       vertices[1] = v1;
       vertices[2] = v2;
@@ -40,7 +43,8 @@ class ModelTriangle
     }
 
 
-    ModelTriangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec2 vt0, glm::vec2 vt1, glm::vec2 vt2, int fileInd) {
+    ModelTriangle(std::string nm, glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec2 vt0, glm::vec2 vt1, glm::vec2 vt2, int fileInd) {
+      name = nm;
       vertices[0] = v0;
       vertices[1] = v1;
       vertices[2] = v2;
@@ -51,7 +55,8 @@ class ModelTriangle
       textureFileIndex = fileInd;
     }
 
-    ModelTriangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec2 vt0, glm::vec2 vt1, glm::vec2 vt2, glm::vec3 vn0, glm::vec3 vn1, glm::vec3 vn2, int fileInd) {
+    ModelTriangle(std::string nm, glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, glm::vec2 vt0, glm::vec2 vt1, glm::vec2 vt2, glm::vec3 vn0, glm::vec3 vn1, glm::vec3 vn2, int fileInd) {
+      name = nm;
       vertices[0] = v0;
       vertices[1] = v1;
       vertices[2] = v2;

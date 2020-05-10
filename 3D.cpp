@@ -64,22 +64,11 @@ struct AreaLight {
   }
 };
 
-struct plane {
-  float x, y, z, w;
-};
-
 class Camera {
   private:
     float xTheta = 0;
     float yTheta = 0;
     float zTheta = 0;
-    vector<plane> frustum {{ 1, 0, 0, 10 },
-            { -1, 0, 0, 10 },
-            { 0, 1, 0, 10 },
-            { 0, -1, 0, 10 },
-            { 0, 0, 1, 10 },
-            { 0, 0, -1, 10 }};
-
 
     void setRotation() {
       rotation = mat3x3(cos(zTheta), -sin(zTheta), 0,
@@ -130,6 +119,7 @@ class Camera {
 void draw();
 void update();
 void handleEvent(SDL_Event event);
+bool handleObjectEvent(SDL_Event event, string objectName);
 CanvasTriangle get2DProjection(ModelTriangle modelTriangle, Camera camera);
 void drawLine(CanvasPoint from, CanvasPoint to, Colour colour);
 
@@ -179,10 +169,13 @@ vector<ModelTriangle> backFaceCull();
 bool pixelClipping(float z);
 inline bool isMirror(ModelTriangle triangle);
 inline bool isGlass(ModelTriangle triangle);
+inline vec3 getMiddle(ModelTriangle triangle);
+void generateObjectMap();
 
 uint32_t BLACK = (255<<24) + (int(0)<<16) + (int(0)<<8) + int(0);
 double depthBuffer[WIDTH][HEIGHT] = { { INF } };
 int savedPPMs = 0;
+unordered_map<string, vector<int>> objectMap;
 
 DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
 Camera camera = Camera(0, 2, 4);
@@ -202,6 +195,7 @@ int main(int argc, char* argv[])
   loadOBJ("cornell-box.obj", 1);
   //loadOBJ("logo.obj", 0.01);
   //loadOBJ("sphere.obj", 0.5);
+  generateObjectMap();
   update();
 
   while(true)
@@ -606,7 +600,7 @@ RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosit
 
 RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosition, ModelTriangle self, vector<ModelTriangle> unculledTriangles) {
   vec3 closestIntersection = vec3(INF);
-  RayTriangleIntersection closestInt = RayTriangleIntersection(vec3(INF), vec3(INF), ModelTriangle(vec3(0),vec3(0),vec3(0),Colour(0,0,0)));
+  RayTriangleIntersection closestInt = RayTriangleIntersection(vec3(INF), vec3(INF), ModelTriangle("name", vec3(0),vec3(0),vec3(0),Colour(0,0,0)));
   //cout << fromPosition.x << " " << rayDirection.x << endl;
   for (int i = 0; i < (int)unculledTriangles.size(); i++) {
     vec3 e0 = unculledTriangles[i].vertices[1] - unculledTriangles[i].vertices[0];
@@ -870,6 +864,18 @@ void drawStrokedTriangle(CanvasTriangle triangle) {
    drawLine(triangle.vertices[2], triangle.vertices[0], triangle.colour);
 }
 
+void generateObjectMap() {
+  for(int i = 0; i < (int)modelTriangles.size(); i++) {
+    if(objectMap.count(modelTriangles[i].name) == 0) {
+      objectMap[modelTriangles[i].name] = vector<int>();
+      objectMap[modelTriangles[i].name].push_back(i);
+    }
+    else {
+      objectMap[modelTriangles[i].name].push_back(i);
+    }
+  }
+}
+
 // Split triangle retruns one or two flat bottomed triangles with the highest
 // vertex first
 vector<CanvasTriangle> splitTriangle(CanvasTriangle triangle) {
@@ -957,6 +963,10 @@ inline bool isPixelOnScreen(int x, int y) {
   else return true;
 }
 
+inline vec3 getMiddle(ModelTriangle triangle) {
+  return (triangle.vertices[0] + triangle.vertices[1] + triangle.vertices[2])/3.0f;
+}
+
 bool isFlatBotttomedTriangle(CanvasTriangle triangle) {
   float y0 = round(triangle.vertices[0].y);
   float y1 = round(triangle.vertices[1].y);
@@ -964,6 +974,113 @@ bool isFlatBotttomedTriangle(CanvasTriangle triangle) {
 
   if (y0 == y1 || y0 == y2 || y1 == y2 ) return true;
   else return false;
+}
+
+void translateObject(string instruction, string objectName) {
+  vector<int> objectIndices = objectMap[objectName];
+
+  if (instruction.compare("LEFT") == 0) {
+    for (int i = 0; i < (int)objectIndices.size(); i++) {
+      modelTriangles[objectIndices[i]].vertices[0].x -= 0.5;
+      modelTriangles[objectIndices[i]].vertices[1].x -= 0.5;
+      modelTriangles[objectIndices[i]].vertices[2].x -= 0.5;
+    }
+  }
+  else if (instruction.compare("RIGHT") == 0) {
+    for (int i = 0; i < (int)objectIndices.size(); i++) {
+      modelTriangles[objectIndices[i]].vertices[0].x += 0.5;
+      modelTriangles[objectIndices[i]].vertices[1].x += 0.5;
+      modelTriangles[objectIndices[i]].vertices[2].x += 0.5;
+    }
+  }
+  else if (instruction.compare("UP") == 0) {
+    for (int i = 0; i < (int)objectIndices.size(); i++) {
+      modelTriangles[objectIndices[i]].vertices[0].y += 0.5;
+      modelTriangles[objectIndices[i]].vertices[1].y += 0.5;
+      modelTriangles[objectIndices[i]].vertices[2].y += 0.5;
+    }
+  }
+  else if (instruction.compare("DOWN") == 0) {
+    for (int i = 0; i < (int)objectIndices.size(); i++) {
+      modelTriangles[objectIndices[i]].vertices[0].y -= 0.5;
+      modelTriangles[objectIndices[i]].vertices[1].y -= 0.5;
+      modelTriangles[objectIndices[i]].vertices[2].y -= 0.5;
+    }
+  }
+  else if (instruction.compare("FORWARD") == 0) {
+    for (int i = 0; i < (int)objectIndices.size(); i++) {
+      modelTriangles[objectIndices[i]].vertices[0].z += 0.5;
+      modelTriangles[objectIndices[i]].vertices[1].z += 0.5;
+      modelTriangles[objectIndices[i]].vertices[2].z += 0.5;
+    }
+  }
+  else if (instruction.compare("BACK") == 0) {
+    for (int i = 0; i < (int)objectIndices.size(); i++) {
+      modelTriangles[objectIndices[i]].vertices[0].z -= 0.5;
+      modelTriangles[objectIndices[i]].vertices[1].z -= 0.5;
+      modelTriangles[objectIndices[i]].vertices[2].z -= 0.5;
+    }
+  }
+}
+
+void rotateObject(string instruction, string objectName) {
+  vector<int> objectIndices = objectMap[objectName];
+  vec3 pivotPoint = vec3(0.0);
+
+  for (int i = 0; i < (int)objectIndices.size(); i++) {
+     pivotPoint += getMiddle(modelTriangles[objectIndices[i]]);
+  }
+  pivotPoint /= (float)objectIndices.size();
+
+  mat3x3 rotation;
+
+  if (instruction.compare("CLOCKZ") == 0) {
+    rotation = mat3x3(cos(-0.5), -sin(-0.5), 0,
+                  sin(-0.5), cos(-0.5), 0,
+                  0, 0, 1) *
+            mat3x3(cos(0), 0, sin(0),
+                  0, 1, 0,
+                  -sin(0), 0, cos(0)) *
+            mat3x3(1, 0, 0,
+                  0, cos(0), -sin(0),
+                  0, sin(0), cos(0));
+  }
+  else if (instruction.compare("CLOCKY") == 0) {
+    rotation = mat3x3(cos(0), -sin(0), 0,
+                  sin(0), cos(0), 0,
+                  0, 0, 1) *
+            mat3x3(cos(0.5), 0, sin(0.5),
+                  0, 1, 0,
+                  -sin(0.5), 0, cos(0.5)) *
+            mat3x3(1, 0, 0,
+                  0, cos(0), -sin(0),
+                  0, sin(0), cos(0));
+  }
+
+for (int i = 0; i < (int)objectIndices.size(); i++) {
+    modelTriangles[objectIndices[i]].vertices[0] = pivotPoint + ((modelTriangles[objectIndices[i]].vertices[0] - pivotPoint) * rotation);
+    modelTriangles[objectIndices[i]].vertices[1] = pivotPoint + ((modelTriangles[objectIndices[i]].vertices[1] - pivotPoint) * rotation);
+    modelTriangles[objectIndices[i]].vertices[2] = pivotPoint + ((modelTriangles[objectIndices[i]].vertices[2] - pivotPoint) * rotation);
+  }
+}
+
+void scaleObject(string instruction, string objectName) {
+  vector<int> objectIndices = objectMap[objectName];
+
+  if (instruction.compare("GROW") == 0) {
+    for (int i = 0; i < (int)objectIndices.size(); i++) {
+      modelTriangles[objectIndices[i]].vertices[0] *= 1.5;
+      modelTriangles[objectIndices[i]].vertices[1] *= 1.5;
+      modelTriangles[objectIndices[i]].vertices[2] *= 1.5;
+    }
+  }
+  else if (instruction.compare("SHRINK") == 0) {
+    for (int i = 0; i < (int)objectIndices.size(); i++) {
+      modelTriangles[objectIndices[i]].vertices[0] *= 0.5;
+      modelTriangles[objectIndices[i]].vertices[1] *= 0.5;
+      modelTriangles[objectIndices[i]].vertices[2] *= 0.5;
+    }
+  }
 }
 
 void handleEvent(SDL_Event event) {
@@ -1037,8 +1154,81 @@ void handleEvent(SDL_Event event) {
       cout << "SAVINGPPM" << endl;
       savePPM();
     }
+    else if(event.key.keysym.sym == SDLK_4) {
+      cout << "SHORT_BOX" << endl;
+      bool polling = true;
+      while(polling) {
+        if(window.pollForInputEvents(&event)) {
+          polling = handleObjectEvent(event, "short_box");
+        }
+      }
+    }
   }
-  else if(event.type == SDL_MOUSEBUTTONDOWN) std::cout << "MOUSE CLICKED" << std::endl;
+}
+
+
+bool handleObjectEvent(SDL_Event event, string objectName) {
+  if(event.key.keysym.sym == SDLK_LEFT) {
+    cout << "Moving " << objectName << " LEFT" << endl;
+    translateObject("LEFT", objectName);
+    update();
+    return false;
+  }
+  else if(event.key.keysym.sym == SDLK_RIGHT) {
+    cout << "Moving " << objectName << " RIGHT" << endl;
+    translateObject("RIGHT", objectName);
+    update();
+    return false;
+  }
+  else if(event.key.keysym.sym == SDLK_UP) {
+    cout << "Moving " << objectName << " UP" << endl;
+    translateObject("UP", objectName);
+    update();
+    return false;
+  }
+  else if(event.key.keysym.sym == SDLK_DOWN) {
+    cout << "Moving " << objectName << " DOWN" << endl;
+    translateObject("DOWN", objectName);
+    update();
+    return false;
+  }
+  else if(event.key.keysym.sym == SDLK_f) {
+    cout << "Moving " << objectName << " FORWARD" << endl;
+    translateObject("FORWARD", objectName);
+    update();
+    return false;
+  }
+  else if(event.key.keysym.sym == SDLK_b) {
+    cout << "Moving " << objectName << " BACK" << endl;
+    translateObject("BACK", objectName);
+    update();
+    return false;
+  }
+  else if(event.key.keysym.sym == SDLK_z) {
+    cout << "Rotating " << objectName << " clockwise about Z" << endl;
+    rotateObject("CLOCKZ", objectName);
+    update();
+    return false;
+  }
+  else if(event.key.keysym.sym == SDLK_y) {
+    cout << "Rotating " << objectName << " clockwise about Y" << endl;
+    rotateObject("CLOCKY", objectName);
+    update();
+    return false;
+  }
+  else if(event.key.keysym.sym == SDLK_g) {
+    cout << "Growing " << objectName << endl;
+    scaleObject("GROW", objectName);
+    update();
+    return false;
+  }
+  else if (event.key.keysym.sym == SDLK_s) {
+    cout << "Shrinking " << objectName << endl;
+    scaleObject("SHRINK", objectName);
+    update();
+    return false;
+  }
+  else return true;
 }
 
 // Loads the colour palette from OBJ material file into hash map
@@ -1082,13 +1272,14 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
   vector<vec2> textureVertices;
   vector<vector<uint32_t>> ppmFile;
   string materialFile;
+  Colour currentColour;
+  string currentName;
 
   ifstream ifs;
   ifs.open (OBJFile, std::ifstream::in);
 
   while( ifs.peek() != EOF || ifs.peek() != -1 )
   {
-    Colour currentColour;
     char line[256];
     ifs.getline(line, 256);
     string lineString = line;
@@ -1124,6 +1315,11 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
       string* tokens = split(lineString, ' ');
       vertexNormals.push_back(vec3(stof(*(tokens + 1)), stof(*(tokens + 2)), stof(*(tokens + 3))));
     }
+    else if (line[0] == 'o') {
+      string* tokens = split(lineString, ' ');
+      currentName = *(tokens + 1);
+      currentName.erase(remove_if(currentName.begin(), currentName.end(), ::isspace), currentName.end());
+    }
     else if (line[0] == 'v') {
       string* tokens = split(lineString, ' ');
       vertices.push_back(vec3(stof(*(tokens + 1)), stof(*(tokens + 2)), stof(*(tokens + 3))));
@@ -1140,8 +1336,8 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
         if (!vertexNormals.empty()) vn.push_back(*(slashTokens + 2));
       }
       if (textureVertices.empty()) {
-        if (vertexNormals.empty()) modelTriangles.push_back(ModelTriangle( vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, currentColour));
-        else modelTriangles.push_back(ModelTriangle( vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, vertices[stoi(vn[0]) - 1], vertices[stoi(vn[1]) - 1], vertices[stoi(vn[2]) - 1], currentColour));
+        if (vertexNormals.empty()) modelTriangles.push_back(ModelTriangle( currentName, vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, currentColour));
+        else modelTriangles.push_back(ModelTriangle( currentName, vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, vertices[stoi(vn[0]) - 1], vertices[stoi(vn[1]) - 1], vertices[stoi(vn[2]) - 1], currentColour));
       }
       else {
         int ppmWidth = (int)ppmFile[1].size()-1;
@@ -1150,7 +1346,7 @@ void loadOBJ(const char* OBJFile, float scaleFactor) {
         vec2 texturePoint0 = vec2(round(textureVertices[stoi(vt[0]) - 1].x * ppmWidth), round(textureVertices[stoi(vt[0]) - 1].y * ppmHeight));
         vec2 texturePoint1 = vec2(round(textureVertices[stoi(vt[1]) - 1].x * ppmWidth), round(textureVertices[stoi(vt[1]) - 1].y * ppmHeight));
         vec2 texturePoint2 = vec2(round(textureVertices[stoi(vt[2]) - 1].x * ppmWidth), round(textureVertices[stoi(vt[2]) - 1].y * ppmHeight));
-        modelTriangles.push_back(ModelTriangle( vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, texturePoint0, texturePoint1, texturePoint2, textureFiles.size()-1));
+        modelTriangles.push_back(ModelTriangle( currentName, vertices[stoi(v[0]) - 1]*scaleFactor,  vertices[stoi(v[1]) - 1]*scaleFactor, vertices[stoi(v[2]) - 1]*scaleFactor, texturePoint0, texturePoint1, texturePoint2, textureFiles.size()-1));
       }
     }
   }
