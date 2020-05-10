@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <math.h>
 #include <thread>
-#include <time.h> 
+#include <time.h>
 #include <boost/thread/thread.hpp>
 
 using namespace std;
@@ -64,11 +64,22 @@ struct AreaLight {
   }
 };
 
+struct plane {
+  float x, y, z, w;
+};
+
 class Camera {
   private:
     float xTheta = 0;
     float yTheta = 0;
     float zTheta = 0;
+    vector<plane> frustum {{ 1, 0, 0, 10 },
+            { -1, 0, 0, 10 },
+            { 0, 1, 0, 10 },
+            { 0, -1, 0, 10 },
+            { 0, 0, 1, 10 },
+            { 0, 0, -1, 10 }};
+
 
     void setRotation() {
       rotation = mat3x3(cos(zTheta), -sin(zTheta), 0,
@@ -121,6 +132,16 @@ void update();
 void handleEvent(SDL_Event event);
 CanvasTriangle get2DProjection(ModelTriangle modelTriangle, Camera camera);
 void drawLine(CanvasPoint from, CanvasPoint to, Colour colour);
+
+//Wu Line Optimisation
+void drawWuAALine(CanvasPoint from, CanvasPoint to, Colour colour);
+void drawPixel(int x, int y, Colour colour);
+int iPartOfNumber(float x);
+float fPartOfNumber(float x);
+float rfPartOfNumber(float x);
+void WuStrokedTriangle(CanvasTriangle triangle);
+
+//
 void drawStrokedTriangle(CanvasTriangle triangle);
 void drawFilledTriangle(CanvasTriangle triangle);
 void drawTexturedTriangle(CanvasTriangle triangle, int textureFileIndex);
@@ -256,7 +277,8 @@ void draw() {
 
   else if (camera.drawingMode == WIREFRAME) {
     for (int i = 0; i < (int)canvasTriangles.size(); i++) {
-      drawStrokedTriangle(canvasTriangles[i]);
+      //drawStrokedTriangle(canvasTriangles[i]);
+      WuStrokedTriangle(canvasTriangles[i]);
     }
   }
 
@@ -306,6 +328,109 @@ void drawLine(CanvasPoint from, CanvasPoint to, Colour colour) {
   }
 }
 
+// LINE OPTIMISATION
+
+int iPartOfNumber(float x)
+{
+    return floor(x);
+}
+
+
+//returns fractional part of a number
+float fPartOfNumber(float x)
+{
+    if (x>0) return x - iPartOfNumber(x);
+    else return x - (iPartOfNumber(x)+1);
+
+}
+
+//returns 1 - fractional part of number
+float rfPartOfNumber(float x)
+{
+    return 1 - fPartOfNumber(x);
+}
+
+void drawPixel(int x, int y, Colour colour, double z) {
+  uint32_t packedColour = (255<<24) + (int(colour.red)<<16) + (int(colour.green)<<8) + int(colour.blue);
+  if (isPixelOnScreen(x, y)) { // Pixel is within resolution
+    if(depthBuffer[(int)x][(int)y] > z) { // Pixel is closer to camera than previous pixel
+        depthBuffer[(int)x][(int)y] = z;
+        window.setPixelColour(x, y, packedColour);
+    }
+  }
+}
+
+void drawWuAALine(CanvasPoint from, CanvasPoint to, Colour colour){
+  float x0 = from.x; float x1 = to.x;
+  float y0 = from.y; float y1 = to.y;
+  double z0 = from.depth; double z1 = to.depth;
+
+  int steep = abs(y1 - y0) > abs(x1 - x0);
+
+  if (steep) {
+      swap(x0 , y0);
+      swap(x1 , y1);
+  }
+  if (x0 > x1){
+      swap(x0 ,x1);
+      swap(y0 ,y1);
+      swap(z0, z1);
+  }
+
+  //compute the slope
+  float dx = x1-x0;
+  float dy = y1-y0;
+  float dz = z1-z0;
+  float gradient = dy/dx;
+  float zGradient = dz/dx;
+  if (dx == 0.0)
+      gradient = 1;
+
+  int xpxl1 = x0;
+  int xpxl2 = x1;
+  float intersectY = y0;
+  double intersectZ = z0;
+
+  // main loop
+  if (steep)
+  {
+      int x;
+      for (x = xpxl1 ; x <=xpxl2 ; x++)
+      {
+          // pixel coverage is determined by fractional
+          // part of y co-ordinate
+          drawPixel(iPartOfNumber(intersectY), x,
+                      colour, intersectZ);
+          drawPixel(iPartOfNumber(intersectY)-1, x,
+                      colour, intersectZ);
+          intersectY += gradient;
+          intersectZ += zGradient;
+      }
+  }
+  else
+  {
+      int x;
+      for (x = xpxl1 ; x <=xpxl2 ; x++)
+      {
+          // pixel coverage is determined by fractional
+          // part of y co-ordinate
+          drawPixel(x, iPartOfNumber(intersectY),
+                      colour, intersectZ);
+          drawPixel(x, iPartOfNumber(intersectY)-1,
+                        colour, intersectZ);
+          intersectY += gradient;
+          intersectZ += zGradient;
+      }
+  }
+
+}
+
+void WuStrokedTriangle(CanvasTriangle triangle) {
+  drawWuAALine(triangle.vertices[0], triangle.vertices[1], triangle.colour);
+  drawWuAALine(triangle.vertices[0], triangle.vertices[2], triangle.colour);
+  drawWuAALine(triangle.vertices[1], triangle.vertices[2], triangle.colour);
+}
+
 // Triangle Rasteriser
 // Works by splitting into two flat bottomed tirangles, and then drawing
 // lines horizontally across both triangle
@@ -313,7 +438,8 @@ void drawFilledTriangle(CanvasTriangle triangle) {
   vector<CanvasTriangle> triangles = splitTriangle(triangle);
 
   for (int i = 0; i < 2; i++) {
-    drawStrokedTriangle(triangles[i]);
+    //drawStrokedTriangle(triangles[i]);
+    WuStrokedTriangle(triangles[i]);
     float lineLeftNumberOfSteps = getLerpNumberOfSteps(triangles[i].vertices[0], triangles[i].vertices[1]);
     float lineRightNumberOfSteps = getLerpNumberOfSteps(triangles[i].vertices[0], triangles[i].vertices[2]);
     float numberOfSteps = std::max(lineLeftNumberOfSteps, lineRightNumberOfSteps);
@@ -322,7 +448,8 @@ void drawFilledTriangle(CanvasTriangle triangle) {
     vector<CanvasPoint> lineRight = interpolate3D(triangles[i].vertices[0], triangles[i].vertices[2], numberOfSteps);
 
     for (size_t j = 0; j < numberOfSteps; j++) {
-      drawLine(lineLeft[j], lineRight[j], triangle.colour);
+      //drawLine(lineLeft[j], lineRight[j], triangle.colour);
+      drawWuAALine(lineLeft[j], lineRight[j], triangle.colour);
     }
   }
 }
@@ -384,7 +511,7 @@ void threadRaytrace(int numThreads) {
     }
   }
   for (int i = 0; i < (int)threads.size(); i++) threads[i]->join();
-  
+
 
   //drawFilledTrianglesRaytrace(0, WIDTH, 0, HEIGHT);
 }
@@ -410,7 +537,7 @@ void drawFilledTrianglesRaytrace(int x0, int x1, int y0, int y1) {
       uint32_t bottomLeft = offsetPixels[oX][oY+1]; uint32_t bottomRight = offsetPixels[oX+1][oY+1];
 
       int flippedX = WIDTH - x - 1;
-      
+
       Colour colour;
       colour.red = (((pixel & 0x00FF0000) >> 16) * 0.5) + (((topLeft & 0x00FF0000) >> 16) + ((topRight & 0x00FF0000) >> 16) + ((bottomLeft & 0x00FF0000) >> 16) + ((bottomRight & 0x00FF0000) >> 16)) * 0.125;
       colour.green = (((pixel & 0x0000FF00) >> 8) * 0.5) + (((topLeft & 0x0000FF00) >> 8) + ((topRight & 0x0000FF00) >> 8) + ((bottomLeft & 0x0000FF00) >> 8) + ((bottomRight & 0x0000FF00) >> 8)) * 0.125;
@@ -434,11 +561,11 @@ uint32_t getRaytraceColour(int x, int y, float offsetX, float offsetY, vector<Mo
     if (intersection.intersectedTriangle.textureFileIndex != -1) {
       colour = getTextureIntersection(intersection.localIntersection, intersection.intersectedTriangle);
     }
-    
+
     else if(isMirror(intersection.intersectedTriangle)){
       colour = mirror(intersection);
     }
-    
+
     else if(isGlass(intersection.intersectedTriangle)) {
       colour = glass(intersection, camera.position, unculledTriangles);
     }
@@ -448,7 +575,7 @@ uint32_t getRaytraceColour(int x, int y, float offsetX, float offsetY, vector<Mo
     }
     if (!isMirror(intersection.intersectedTriangle))  {
       brightness = calculateBrightness(intersection);
-      packedColour = (255<<24) + (int(colour.red*brightness)<<16) + (int(colour.green*brightness)<<8) + int(colour.blue*brightness);    
+      packedColour = (255<<24) + (int(colour.red*brightness)<<16) + (int(colour.green*brightness)<<8) + int(colour.blue*brightness);
     }
     else packedColour = (255<<24) + (int(colour.red)<<16) + (int(colour.green)<<8) + int(colour.blue);
 
@@ -487,7 +614,7 @@ RayTriangleIntersection getClosestIntersection(vec3 rayDirection, vec3 fromPosit
     vec3 SPVector = fromPosition - unculledTriangles[i].vertices[0];
     mat3 DEMatrix(-rayDirection, e0, e1);
     vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
-    
+
     if (isInTriangle(possibleSolution) && abs(possibleSolution.x) <= abs(closestIntersection.x) && !isTriangleSelf(self, unculledTriangles[i]) && !isMirror(unculledTriangles[i]) && !isGlass(unculledTriangles[i])) {
       closestIntersection = possibleSolution;
       vec3 position = fromPosition + (closestIntersection.x * rayDirection);
@@ -548,7 +675,7 @@ Colour mirror(RayTriangleIntersection intersection) {
   vec3 cameraVector = normalize(camera.position - intersection.intersectionPoint);
   vec3 localInt = intersection.localIntersection;
   vec3 pixelNormal;
-  Colour colour; 
+  Colour colour;
   if (intTriangle.hasNormals) {
     pixelNormal = normalize(((1 - localInt.y - localInt.z) * intTriangle.vertices[0]) + (localInt.y * intTriangle.vertices[1]) + (localInt.z * intTriangle.vertices[2]));
   }
@@ -619,22 +746,22 @@ vec3 getRefraction(vec3 incidentRay, vec3 pixelNormal, float refractiveIndex) {
 }
 
 float getFresnel(vec3 incidentRay, vec3 pixelNormal, float refractiveIndex) {
-  float cosi = clamp(-1.0f, 1.0f, dot(incidentRay, pixelNormal)); 
+  float cosi = clamp(-1.0f, 1.0f, dot(incidentRay, pixelNormal));
   float etai = 1; float kr;
-  if (cosi > 0) { std::swap(etai, refractiveIndex); } 
+  if (cosi > 0) { std::swap(etai, refractiveIndex); }
   // Compute sini using Snell's law
-  float sint = etai / refractiveIndex * sqrtf(std::max(0.f, 1 - cosi * cosi)); 
+  float sint = etai / refractiveIndex * sqrtf(std::max(0.f, 1 - cosi * cosi));
   // Total internal reflection
-  if (sint >= 1) { 
-      kr = 1; 
-  } 
-  else { 
-      float cost = sqrtf(std::max(0.f, 1 - sint * sint)); 
-      cosi = fabsf(cosi); 
-      float Rs = ((refractiveIndex * cosi) - (etai * cost)) / ((refractiveIndex * cosi) + (etai * cost)); 
-      float Rp = ((etai * cosi) - (refractiveIndex * cost)) / ((etai * cosi) + (refractiveIndex * cost)); 
-      kr = (Rs * Rs + Rp * Rp) / 2; 
-  } 
+  if (sint >= 1) {
+      kr = 1;
+  }
+  else {
+      float cost = sqrtf(std::max(0.f, 1 - sint * sint));
+      cosi = fabsf(cosi);
+      float Rs = ((refractiveIndex * cosi) - (etai * cost)) / ((refractiveIndex * cosi) + (etai * cost));
+      float Rp = ((etai * cosi) - (refractiveIndex * cost)) / ((etai * cosi) + (refractiveIndex * cost));
+      kr = (Rs * Rs + Rp * Rp) / 2;
+  }
   return kr;
 }
 
