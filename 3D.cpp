@@ -192,8 +192,10 @@ vector<vector<vector<uint32_t>>> textureFiles;
 int main(int argc, char* argv[])
 {
   SDL_Event event;
-  loadOBJ("cornell-box.obj", 1);
+  //loadOBJ("cornell-box.obj", 1);
   //loadOBJ("logo.obj", 0.01);
+  loadOBJ("portal.obj", 1);
+  loadOBJ("discoBall.obj", 1);
   //loadOBJ("sphere.obj", 0.5);
   generateObjectMap();
   update();
@@ -1382,6 +1384,7 @@ vector<vector<uint32_t>> loadPPM(string file) {
       colours.push_back(colour);
     }
     pixelValues.push_back(colours);
+    cout << "hello" << endl;
   }
 
   return pixelValues;
