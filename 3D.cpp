@@ -193,9 +193,9 @@ int main(int argc, char* argv[])
 {
   SDL_Event event;
   //loadOBJ("cornell-box.obj", 1);
-  //loadOBJ("logo.obj", 0.01);
+  loadOBJ("logo.obj", 0.01);
   loadOBJ("portal.obj", 1);
-  loadOBJ("discoBall.obj", 1);
+  //loadOBJ("discoBall.obj", 1);
   //loadOBJ("sphere.obj", 0.5);
   generateObjectMap();
   update();
@@ -868,13 +868,18 @@ void drawStrokedTriangle(CanvasTriangle triangle) {
 
 void generateObjectMap() {
   for(int i = 0; i < (int)modelTriangles.size(); i++) {
+    if (modelTriangles[i].name.compare("portal") == 0) {
+      modelTriangles[i].textureVertices[0].y /= 1.2;
+      modelTriangles[i].textureVertices[1].y /= 1.2;
+      modelTriangles[i].textureVertices[2].y /= 1.2;
+    }
     if(objectMap.count(modelTriangles[i].name) == 0) {
       objectMap[modelTriangles[i].name] = vector<int>();
       objectMap[modelTriangles[i].name].push_back(i);
     }
     else {
       objectMap[modelTriangles[i].name].push_back(i);
-    }
+    }  
   }
 }
 
@@ -1359,10 +1364,12 @@ vector<vector<uint32_t>> loadPPM(string file) {
   ifstream ifs;
   ifs.open (file, std::ifstream::in);
 
-  char format[256], comment[256], widthAndHeight[256], colourChannel[256];
+  char format[256], widthAndHeight[256], colourChannel[256];//, comment[256];
+  widthAndHeight[0] = '#';
   ifs.getline(format, 256);
-  ifs.getline(comment, 256);
-  ifs.getline(widthAndHeight, 256);
+  while (widthAndHeight[0] == '#') {
+    ifs.getline(widthAndHeight, 256);
+  }
   ifs.getline(colourChannel, 256);
 
   string s = widthAndHeight;
@@ -1375,7 +1382,6 @@ vector<vector<uint32_t>> loadPPM(string file) {
   int height = stoi(heightStr, nullptr, 10);
 
   vector<vector<uint32_t>> pixelValues;
-
   for(int y=0; y < height; y++) {
     vector<uint32_t> colours;
 
@@ -1384,7 +1390,6 @@ vector<vector<uint32_t>> loadPPM(string file) {
       colours.push_back(colour);
     }
     pixelValues.push_back(colours);
-    cout << "hello" << endl;
   }
 
   return pixelValues;
